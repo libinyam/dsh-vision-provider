@@ -1,0 +1,48 @@
+{
+  "name": "dsh-vision-provider",
+  "version": "0.1.0",
+  "description": "Config-only DeepSeek Harness bundle for OpenAI-compatible vision models.",
+  "type": "module",
+  "license": "MIT",
+  "author": "libinyam",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/libinyam/dsh-vision-provider.git"
+  },
+  "homepage": "https://github.com/libinyam/dsh-vision-provider#readme",
+  "bugs": {
+    "url": "https://github.com/libinyam/dsh-vision-provider/issues"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "scripts/validate.mjs"
+  ],
+  "exports": {
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node scripts/validate.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "vision",
+    "multimodal",
+    "openai-compatible",
+    "image-input",
+    "profile-bundle"
+  ]
+}

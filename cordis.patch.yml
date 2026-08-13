@@ -1,0 +1,27 @@
+# Adds one configurable OpenAI-compatible vision route to the existing
+# @deepseek-ai/dsh-llm-pi-ai row. Harness already owns image upload, durable
+# attachment storage, capability checks, and conversion to provider messages.
+#
+# Defaults can be changed in Settings > Models after boot, or before boot with:
+#   DSH_VISION_BASE_URL
+#   DSH_VISION_MODEL
+#   DSH_VISION_MODEL_NAME
+#   DSH_VISION_DISPLAY_NAME
+#   DSH_VISION_API_KEY_ENV
+#
+# Set DSH_VISION_NO_AUTH=1 for a local endpoint that accepts a harmless
+# placeholder Authorization header instead of a real API key.
+
+- id: llm-pi-ai
+  config:
+    providers:
+      vision-openai:
+        displayName: !!js process.env.DSH_VISION_DISPLAY_NAME ?? 'Vision (OpenAI Compatible)'
+        apiKeyEnv: !!js "process.env.DSH_VISION_NO_AUTH === '1' ? undefined : (process.env.DSH_VISION_API_KEY_ENV ?? 'VISION_OPENAI_API_KEY')"
+        headers: !!js "process.env.DSH_VISION_NO_AUTH === '1' ? { Authorization: 'Bearer dsh-no-auth' } : undefined"
+        api: openai-completions
+        baseURL: !!js process.env.DSH_VISION_BASE_URL ?? 'https://api.openai.com/v1'
+        defaultInput: [text, image]
+        models:
+          - id: !!js process.env.DSH_VISION_MODEL ?? 'gpt-4.1-mini'
+            name: !!js process.env.DSH_VISION_MODEL_NAME ?? process.env.DSH_VISION_MODEL ?? 'GPT-4.1 mini (Vision)'
