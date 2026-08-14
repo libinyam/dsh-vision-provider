@@ -1,8 +1,9 @@
 {
   "name": "dsh-vision-provider",
-  "version": "0.1.0",
-  "description": "Config-only DeepSeek Harness bundle for OpenAI-compatible vision models.",
+  "version": "0.2.0",
+  "description": "Composite DeepSeek Harness adapter that adds a private vision sidecar to DeepSeek V4 Flash.",
   "type": "module",
+  "main": "./src/index.js",
   "license": "MIT",
   "author": "libinyam",
   "repository": {
@@ -14,6 +15,8 @@
     "url": "https://github.com/libinyam/dsh-vision-provider/issues"
   },
   "files": [
+    "src/index.js",
+    "test/composite.test.mjs",
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md",
@@ -22,11 +25,12 @@
     "scripts/validate.mjs"
   ],
   "exports": {
+    ".": "./src/index.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "scripts": {
-    "test": "node scripts/validate.mjs"
+    "test": "node --test && node scripts/validate.mjs"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -43,6 +47,8 @@
     "multimodal",
     "openai-compatible",
     "image-input",
-    "profile-bundle"
+    "profile-bundle",
+    "composite-model",
+    "vision-sidecar"
   ]
 }

@@ -2,64 +2,68 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A config-only profile bundle that gives
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) an
-OpenAI-compatible multimodal model route.
+`dsh-vision-provider` gives
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) one
+selectable composite model:
 
-It reuses the image pipeline already built into Harness:
+```text
+deepseek-v4-flash  DeepSeek V4 Flash + Vision
+```
 
-- paste or drag images into the Web composer;
-- persist attachments with the session;
-- expose a model that declares `text` and `image` input;
-- convert the request through `@deepseek-ai/dsh-llm-pi-ai`;
-- send it to OpenAI or another compatible endpoint.
+Select only one model in Harness. The plugin coordinates two providers behind
+that single selection:
 
-There is no runtime JavaScript plugin and no Harness source patch. The package
-only contributes one `cordis.patch.yml` layer.
+```text
+Text-only message ───────────────────────────────> DeepSeek V4 Flash
+
+Image message ──> private vision sidecar ──> visual description
+                                               │
+                                               └──> DeepSeek V4 Flash ──> answer
+```
+
+The OpenAI-compatible vision model is internal. It is not registered as a
+second chat model and does not appear in the model selector.
 
 > This is a community project. It is not an official DeepSeek or OpenAI
 > package.
 
-## What it adds
+## Why v0.2.0 exists
 
-The initial route is intentionally small and easy to edit:
+Version `0.1.0` added a standalone model named `vision-openai`. DeepSeek
+Harness can select only one model for a session, so users had to choose either
+DeepSeek or the vision model. The two models could not cooperate.
 
-| Field | Default |
-| --- | --- |
-| Provider route | `vision-openai` |
-| Provider display name | `Vision (OpenAI Compatible)` |
-| API protocol | `openai-completions` |
-| Base URL | `https://api.openai.com/v1` |
-| Model ID | `gpt-4.1-mini` |
-| Model display name | `GPT-4.1 mini (Vision)` |
-| Input modalities | `text`, `image` |
-| Credential reference | `VISION_OPENAI_API_KEY` |
+Version `0.2.0` replaces that design with a runtime composite adapter:
 
-**Model ID** is the exact string sent to the endpoint. **Model display name**
-is only the human-readable label shown in Harness. For the default model:
+- `deepseek-vision/deepseek-v4-flash` declares `text` and `image` input;
+- text-only requests go directly to `deepseek-official/deepseek-v4-flash`;
+- image-bearing messages are analyzed by an internal OpenAI-compatible model;
+- the visual analysis replaces the raw image before the request reaches
+  DeepSeek;
+- DeepSeek remains the model that reasons, uses tools, and writes the final
+  answer;
+- repeated tool steps reuse cached image analysis in the current process.
 
-```text
-gpt-4.1-mini  GPT-4.1 mini (Vision)
-```
-
-An endpoint may use a different ID even when its marketing name looks similar.
-Always copy the model ID from your provider's API documentation.
+This is a two-model bridge, not native pixel input for DeepSeek. The quality of
+the final answer depends on both the vision sidecar and DeepSeek.
 
 ## Requirements
 
-- A working DeepSeek Harness checkout or installation.
+- DeepSeek Harness `0.1.0-rc.5` or a compatible build.
 - Node.js `>=22.19.0`.
-- `pnpm` available to the `dsh plugin` command.
-- A vision-capable OpenAI-compatible model endpoint.
-- An API key, unless the local endpoint accepts placeholder authorization.
+- A configured DeepSeek API key for the native `deepseek-official` provider.
+- An OpenAI-compatible vision endpoint and API key.
+- `pnpm` available to `dsh plugin`.
 
-This bundle was prepared against DeepSeek Harness `0.1.0-rc.5`. Harness is
-still evolving, so inspect the compatibility notes when upgrading either
-project.
+When upgrading from `v0.1.0`, an existing active `vision-openai` route is
+automatically reused as the hidden sidecar. On a fresh install, the direct
+sidecar default is `gpt-4.1-mini` at `https://api.openai.com/v1`. Any endpoint
+that implements OpenAI-compatible `/chat/completions` image input can be used
+instead.
 
-## Install from GitHub
+## Install
 
-### Running Harness from its source repository
+### Harness source checkout
 
 From the DeepSeek Harness repository:
 
@@ -71,10 +75,7 @@ pnpm dsh plugin --profile web add github:libinyam/dsh-vision-provider
 pnpm dsh web
 ```
 
-The first command installs the package into the `web` profile and appends
-`dsh-vision-provider` to its ordered `dsh.profile.bundles` list.
-
-### Running an installed `dsh`
+### Installed `dsh` command
 
 ```powershell
 $env:DSH_HOME = "D:\dsh-home"
@@ -83,193 +84,237 @@ dsh plugin --profile web add github:libinyam/dsh-vision-provider
 dsh web
 ```
 
-Use the same `DSH_HOME` whenever you install plugins or launch Harness.
-Without it, Harness defaults to `~/.dsh`, which may be a different profile
-home.
+Always use the same `DSH_HOME` for plugin management and startup.
 
-## Configure
+## Configure keys
 
-### OpenAI
+The composite model ultimately uses two credentials:
 
-1. Launch the Web profile.
-2. Open **Settings > Models**.
-3. Find `Vision (OpenAI Compatible)` / `vision-openai`.
-4. Store your API key for the `VISION_OPENAI_API_KEY` credential reference.
-5. Keep the default Base URL and model ID, or replace them with values
-   supported by your account.
-6. Start a new session and select the vision model.
+1. DeepSeek key: configure the native DeepSeek provider in
+   **Settings > Models** as usual.
+2. Vision key: an existing `vision-openai` route continues using its own
+   Harness configuration. The direct sidecar fallback uses
+   `VISION_OPENAI_API_KEY` by default.
 
-Harness stores credentials under `$DSH_HOME` through its credential service.
-This repository does not contain or receive your API key.
+For the current PowerShell window:
 
-### Third-party OpenAI-compatible gateway
+```powershell
+$env:VISION_OPENAI_API_KEY = "your-vision-api-key"
+pnpm dsh web
+```
+
+To persist it for future PowerShell windows:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "VISION_OPENAI_API_KEY",
+    "your-vision-api-key",
+    "User"
+)
+```
+
+Close and reopen PowerShell after setting a persistent user variable.
+
+API keys are never written to this repository or logged by the plugin. The
+plugin first asks Harness's credential service for the configured reference,
+then falls back to the launching process environment.
+
+## Use
+
+1. Start or restart the Web profile.
+2. Create a new session.
+3. Select `DeepSeek + Vision`.
+4. Select `deepseek-v4-flash / DeepSeek V4 Flash + Vision`.
+5. Paste or drag an image into the composer.
+6. Add a question and send it.
+
+You do not select the GLM/OpenAI vision model. It is an internal sidecar used
+only when an image is present.
+
+Pure text messages skip the vision endpoint entirely.
+
+## Upgrade from v0.1.0
+
+Stop Harness, then run:
+
+```powershell
+Set-Location D:\deepseek-harness
+$env:DSH_HOME = "D:\dsh-home"
+
+pnpm dsh plugin --profile web update dsh-vision-provider
+pnpm dsh web
+```
+
+If the GitHub dependency does not refresh, perform a clean reinstall:
+
+```powershell
+pnpm dsh plugin --profile web remove dsh-vision-provider
+pnpm dsh plugin --profile web add github:libinyam/dsh-vision-provider
+pnpm dsh web
+```
+
+An existing `vision-openai` entry remains in **Settings > Models** because it
+is user-owned configuration created while `v0.1.0` was installed. `v0.2.0`
+automatically reuses that active route as its hidden sidecar, so your existing
+GLM model, protocol, endpoint, and credential continue to work. Select only
+`DeepSeek + Vision` for the conversation; you do not need to select the old
+route separately.
+
+The old route can be deleted only after you configure the direct sidecar and
+set `DSH_VISION_USE_LEGACY=0`.
+
+## Custom vision endpoint
 
 Set defaults before starting Harness:
 
 ```powershell
+$env:DSH_VISION_USE_LEGACY = "0"
 $env:DSH_VISION_BASE_URL = "https://gateway.example/v1"
 $env:DSH_VISION_MODEL = "vendor-vision-model-id"
-$env:DSH_VISION_MODEL_NAME = "Vendor Vision Model"
-$env:DSH_VISION_DISPLAY_NAME = "My Vision Gateway"
 $env:DSH_VISION_API_KEY_ENV = "MY_VISION_GATEWAY_KEY"
 $env:MY_VISION_GATEWAY_KEY = "your-api-key"
 
 pnpm dsh web
 ```
 
-You may also edit these values in **Settings > Models**. Saved settings merge
-over the bundle defaults and apply to the next request.
+`DSH_VISION_MODEL` identifies the hidden vision sidecar. It does not change the
+selectable DeepSeek model.
 
-### Local endpoint without real authentication
+### Local endpoint without authentication
 
-Some OpenAI-compatible clients still require an authorization value even when
-the local server does not validate it. This mode injects the harmless header
-`Authorization: Bearer dsh-no-auth`:
+Some local OpenAI-compatible servers accept a placeholder Authorization
+header:
 
 ```powershell
 $env:DSH_VISION_NO_AUTH = "1"
 $env:DSH_VISION_BASE_URL = "http://127.0.0.1:11434/v1"
 $env:DSH_VISION_MODEL = "your-local-vision-model"
-$env:DSH_VISION_MODEL_NAME = "Local Vision Model"
 
 pnpm dsh web
 ```
 
-Use this only with a trusted local endpoint that tolerates a placeholder
-Authorization header. If the server requires a real key, leave
-`DSH_VISION_NO_AUTH` unset and configure a credential normally.
+This sends `Authorization: Bearer dsh-no-auth`. Use it only with a trusted
+local endpoint. Do not enable it for a remote service that requires a real
+key.
 
 ## Environment reference
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `DSH_VISION_BASE_URL` | OpenAI-compatible API root | `https://api.openai.com/v1` |
-| `DSH_VISION_MODEL` | Exact model ID sent to the API | `gpt-4.1-mini` |
-| `DSH_VISION_MODEL_NAME` | Human-readable model label | Model ID, then `GPT-4.1 mini (Vision)` |
-| `DSH_VISION_DISPLAY_NAME` | Provider label in Harness | `Vision (OpenAI Compatible)` |
-| `DSH_VISION_API_KEY_ENV` | Credential reference name | `VISION_OPENAI_API_KEY` |
-| `DSH_VISION_NO_AUTH` | Use placeholder authorization when set to `1` | unset |
+| `DSH_VISION_DISPLAY_NAME` | Composite provider label | `DeepSeek + Vision` |
+| `DSH_VISION_COMPOSITE_MODEL` | Composite model ID shown by Harness | `deepseek-v4-flash` |
+| `DSH_VISION_COMPOSITE_NAME` | Composite model display name | `DeepSeek V4 Flash + Vision` |
+| `DSH_VISION_MAIN_PROVIDER` | Internal text/reasoning provider | `deepseek-official` |
+| `DSH_VISION_MAIN_MODEL` | Internal DeepSeek model | `deepseek-v4-flash` |
+| `DSH_VISION_BASE_URL` | Vision API root | `https://api.openai.com/v1` |
+| `DSH_VISION_MODEL` | Hidden vision model ID | `gpt-4.1-mini` |
+| `DSH_VISION_API_KEY_ENV` | Vision credential reference | `VISION_OPENAI_API_KEY` |
+| `DSH_VISION_NO_AUTH` | Use placeholder auth when set to `1` | unset |
+| `DSH_VISION_MAX_TOKENS` | Maximum vision-analysis output | `1024` |
+| `DSH_VISION_TIMEOUT_MS` | Vision request timeout | `120000` |
+| `DSH_VISION_DETAIL` | OpenAI image detail: `auto`, `low`, or `high` | `auto` |
+| `DSH_VISION_USE_LEGACY` | Reuse an active legacy route; set `0` for direct mode | enabled |
+| `DSH_VISION_LEGACY_PROVIDER` | Legacy sidecar provider route | `vision-openai` |
+| `DSH_VISION_LEGACY_MODEL` | Optional exact legacy sidecar model; otherwise use its first model | unset |
 
-Environment values form the composition defaults read at boot. User values
-saved through the Models page have higher priority.
+## Data flow and privacy
 
-## Use images
+For a text-only request, no data is sent to the vision endpoint.
 
-1. Start a new session.
-2. Select the model under `Vision (OpenAI Compatible)`.
-3. Paste an image into the composer or drag an image onto the page.
-4. Add a text instruction and send the message.
+For an image-bearing message, the selected sidecar receives:
 
-The model is declared with the `image` modality, so Harness allows the
-attachment into the request. This declaration does **not** prove that the
-remote endpoint accepts images. If the model ID is text-only, the provider may
-reject the request after the message has been persisted.
+- the image bytes;
+- text in the same image-bearing message;
+- a fixed instruction asking for factual visual transcription.
 
-## Composition details
+DeepSeek receives the normal conversation plus the generated visual
+description. The plugin does not send the entire conversation to the vision
+endpoint unless every message in that conversation independently contains an
+image.
 
-The bundle targets the existing `llm-pi-ai` row and supplies one provider in
-its composition base. Harness's settings layer then merges user configuration
-per provider, which is why edits in **Settings > Models** can override fields
-or add more routes.
+Review both providers' retention and privacy policies. Image analysis can
+incur a separate provider charge in addition to the DeepSeek request.
 
-Harness bundle patches replace a targeted row's complete `config` value rather
-than deep-merging bundle-to-bundle configuration. If another installed bundle
-also patches `llm-pi-ai`, bundle order determines which composition base wins.
-Combine the provider definitions into one later patch layer when using such
-bundles together.
+The process-local cache avoids analyzing the same persisted message on every
+tool step. It is cleared when Harness restarts, so old image messages may be
+analyzed again after a restart or session resume.
 
 ## Troubleshooting
 
-### The provider appears, but the request says the credential is missing
+### Images are still rejected
 
-Add the key in **Settings > Models**, or set the environment variable named by
-`DSH_VISION_API_KEY_ENV`. The default reference is
-`VISION_OPENAI_API_KEY`.
+Create a new session and select the provider `DeepSeek + Vision`, not
+`DeepSeek`. The native `deepseek-official` model intentionally declares
+text-only input.
 
-### The endpoint returns 401 or 403
-
-Check the key, Base URL, and gateway-specific authentication rules. Do not use
-`DSH_VISION_NO_AUTH=1` for a remote service that expects a real key.
-
-### The endpoint says the model does not exist
-
-The Model ID is wrong for that endpoint. Change the ID sent to the API; changing
-only the display name does not affect requests.
-
-### Images are rejected
-
-Confirm that the exact model ID supports image input through the selected API
-protocol. Open a new session after changing models. A text-only model cannot be
-made visual merely by declaring the `image` modality.
-
-### The provider disappeared after installing another bundle
-
-The other bundle may also replace the `llm-pi-ai` row config. Inspect the
-composed tree:
+Inspect the composed tree:
 
 ```powershell
 pnpm dsh --profile web --dump-config
 ```
 
-Then consolidate the provider definitions in the profile's later
-`cordis.patch.yml` layer or adjust the bundle order.
+It should contain a row whose `id` and `name` are both
+`dsh-vision-provider`.
 
-### Changes do not match the environment variables
+### The plugin reports `MISSING_CREDENTIAL`
 
-Values saved in **Settings > Models** override bundle defaults. Edit or remove
-the saved provider values, then retry the request.
+Set the environment variable named by `DSH_VISION_API_KEY_ENV`. The default is
+`VISION_OPENAI_API_KEY`. Restart Harness after changing persistent variables.
 
-## Update
+### The vision endpoint returns 401 or 403
+
+Check the sidecar key, Base URL, model ID, and gateway authentication rules.
+The DeepSeek key and vision key are separate.
+
+### The endpoint says the model does not exist
+
+`DSH_VISION_MODEL` must be the exact model ID accepted by the configured vision
+endpoint. A display name is not an API model ID.
+
+### The old standalone vision model is still visible
+
+That route is user-owned configuration left by `v0.1.0`; the new bundle does
+not register it. It can stay visible while the composite model reuses it
+internally. To remove it, first configure direct mode, set
+`DSH_VISION_USE_LEGACY=0`, restart Harness, verify image input, and then delete
+the old provider.
+
+### DeepSeek answers without using the image
+
+Confirm that the selected provider is `DeepSeek + Vision`. Then test the
+vision endpoint directly or try a stronger sidecar model. The downstream
+DeepSeek model sees the sidecar's textual description, so omitted visual
+details cannot be recovered later.
+
+## Update and uninstall
 
 ```powershell
 pnpm dsh plugin --profile web update dsh-vision-provider
 ```
 
-For a clean reinstall:
-
-```powershell
-pnpm dsh plugin --profile web remove dsh-vision-provider
-pnpm dsh plugin --profile web add github:libinyam/dsh-vision-provider
-```
-
-## Uninstall
-
 ```powershell
 pnpm dsh plugin --profile web remove dsh-vision-provider
 ```
 
-Removing the bundle does not automatically erase user-owned provider settings
-or credentials. Delete the `vision-openai` entry and its credential in the
-Models page if they are no longer needed.
+Removing the bundle does not automatically delete user-owned provider settings
+or credentials.
 
 ## Development
-
-Clone this repository and run:
 
 ```powershell
 npm test
 npm pack --dry-run
 ```
 
-To install a local checkout:
+Install a local checkout:
 
 ```powershell
 pnpm dsh plugin --profile web add "C:\path\to\dsh-vision-provider"
 ```
 
-Useful upstream references:
-
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [CLI behavior reference](https://github.com/deepseek-ai/deepseek-harness/blob/HEAD/apps/cli/reference/README.md)
-- [`dsh-llm-pi-ai` provider guide](https://github.com/deepseek-ai/deepseek-harness/blob/HEAD/packages/llm/llm-pi-ai/README.md)
-
-## Security and privacy
-
-- Never commit API keys to this repository or a profile patch.
-- Images, prompts, tool results, and conversation context are sent to the
-  configured endpoint. Review that provider's retention and privacy policy.
-- Treat custom gateways as trusted infrastructure.
-- The no-auth mode uses a visible, non-secret placeholder header.
+The runtime is dependency-free ESM and uses the services already supplied by
+Harness: `llm` for nested DeepSeek routing and `attachments` for durable image
+bytes.
 
 ## License
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as plugin from '../src/index.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'))
@@ -11,25 +12,35 @@ const readmeZh = await readFile(resolve(root, 'README.zh-CN.md'), 'utf8')
 const license = await readFile(resolve(root, 'LICENSE'), 'utf8')
 
 assert.equal(manifest.name, 'dsh-vision-provider')
-assert.equal(manifest.version, '0.1.0')
+assert.equal(manifest.version, '0.2.0')
+assert.equal(manifest.main, './src/index.js')
+assert.equal(manifest.exports?.['.'], './src/index.js')
 assert.equal(manifest.license, 'MIT')
 assert.equal(manifest.repository?.url, 'git+https://github.com/libinyam/dsh-vision-provider.git')
 assert.equal(manifest.dsh?.bundle?.patch, './cordis.patch.yml')
-assert.match(patch, /- id: llm-pi-ai/)
-assert.match(patch, /api: openai-completions/)
-assert.match(patch, /defaultInput: \[text, image\]/)
-assert.match(patch, /vision-openai:/)
-assert.match(
-  patch,
-  /apiKeyEnv: !!js "process\.env\.DSH_VISION_NO_AUTH === '1' \? undefined : \(process\.env\.DSH_VISION_API_KEY_ENV \?\? 'VISION_OPENAI_API_KEY'\)"/,
-)
-assert.match(patch, /Authorization: 'Bearer dsh-no-auth'/)
-assert.match(patch, /process\.env\.DSH_VISION_MODEL \?\? 'gpt-4\.1-mini'/)
+
+assert.equal(plugin.name, 'dsh-vision-provider')
+assert.deepEqual(plugin.inject, ['llm', 'attachments'])
+assert.equal(typeof plugin.apply, 'function')
+assert.equal(typeof plugin.CompositeVisionAdapter, 'function')
+
+assert.match(patch, /- insert:/)
+assert.match(patch, /name: dsh-vision-provider/)
+assert.match(patch, /provider: deepseek-vision/)
+assert.match(patch, /mainProvider: .*deepseek-official/)
+assert.match(patch, /mainModel: .*deepseek-v4-flash/)
+assert.match(patch, /visionModel: .*gpt-4\.1-mini/)
+assert.match(patch, /legacyProvider: .*vision-openai/)
+assert.doesNotMatch(patch, /- id: llm-pi-ai/)
+assert.doesNotMatch(patch, /vision-openai:\s*$/m)
+
+assert.match(readme, /DeepSeek V4 Flash \+ Vision/)
 assert.match(readme, /github:libinyam\/dsh-vision-provider/)
-assert.match(readme, /Model ID/)
+assert.match(readme, /select only one model/i)
+assert.match(readmeZh, /DeepSeek V4 Flash \+ Vision/)
 assert.match(readmeZh, /github:libinyam\/dsh-vision-provider/)
-assert.match(readmeZh, /模型 ID/)
+assert.match(readmeZh, /只选择一个模型/)
 assert.match(license, /MIT License/)
 assert.match(license, /Copyright \(c\) 2026 libinyam/)
 
-console.log('dsh-vision-provider: package, docs, license, and multimodal patch look valid')
+console.log('dsh-vision-provider: runtime, bundle patch, docs, and license look valid')
