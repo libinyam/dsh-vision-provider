@@ -394,6 +394,11 @@ The runtime is dependency-free ESM and uses the services already supplied by
 Harness: `llm` for nested DeepSeek routing and `attachments` for durable image
 bytes.
 
+## Community acknowledgements
+
+Thanks to the [Linux.do](https://linux.do/) community for its discussion,
+feedback, and support.
+
 ## License
 
 [MIT](LICENSE)

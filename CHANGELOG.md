@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added a bilingual community acknowledgement for Linux.do.
+
 ## [0.3.3] - 2026-08-14
 
 ### Changed

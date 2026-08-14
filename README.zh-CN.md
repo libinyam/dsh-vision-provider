@@ -362,6 +362,10 @@ pnpm dsh plugin --profile web add "C:\你的路径\dsh-vision-provider"
 运行时代码是无第三方依赖的 ESM，直接复用 Harness 提供的 `llm` 和
 `attachments` 服务。
 
+## 社区鸣谢
+
+感谢 [Linux.do](https://linux.do/) 社区提供的交流、反馈与支持。
+
 ## 开源协议
 
 [MIT](LICENSE)
