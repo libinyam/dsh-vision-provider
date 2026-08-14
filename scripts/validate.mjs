@@ -12,7 +12,7 @@ const readmeZh = await readFile(resolve(root, 'README.zh-CN.md'), 'utf8')
 const license = await readFile(resolve(root, 'LICENSE'), 'utf8')
 
 assert.equal(manifest.name, 'dsh-vision-provider')
-assert.equal(manifest.version, '0.3.1')
+assert.equal(manifest.version, '0.3.2')
 assert.equal(manifest.main, './src/index.js')
 assert.equal(manifest.exports?.['.'], './src/index.js')
 assert.equal(manifest.license, 'MIT')

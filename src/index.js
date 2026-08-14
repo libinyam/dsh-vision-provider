@@ -597,7 +597,6 @@ export class CompositeVisionAdapter {
       () => timeout.abort(pluginError('dsh-vision-provider: vision request timed out', 'TIMEOUT')),
       this.config.visionTimeoutMs,
     )
-    timer.unref?.()
     const signal = callerSignal == null
       ? timeout.signal
       : AbortSignal.any([callerSignal, timeout.signal])

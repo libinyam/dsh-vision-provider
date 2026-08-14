@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-14
+
+### Fixed
+
+- Kept the vision timeout timer referenced until the request settles, ensuring
+  stalled registered sidecars time out reliably on Linux and in GitHub Actions.
+
 ## [0.3.1] - 2026-08-14
 
 ### Fixed
@@ -73,7 +80,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Local no-real-key mode with a non-secret placeholder Authorization header.
 - English and Simplified Chinese documentation.
 
-[Unreleased]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/libinyam/dsh-vision-provider/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/libinyam/dsh-vision-provider/compare/v0.1.0...v0.2.0
