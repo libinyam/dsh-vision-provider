@@ -7,6 +7,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-14
+
+### Changed
+
+- Cached registered vision-model discovery for 30 seconds, including in-flight
+  deduplication shared by model listing and selected-model routing.
+- Documented that the direct vision fallback bypasses Harness retry,
+  middleware, and token-accounting integrations.
+
+### Fixed
+
+- Kept the runtime User-Agent version synchronized with the package version and
+  added validation to prevent future version drift.
+
 ## [0.3.2] - 2026-08-14
 
 ### Fixed
@@ -80,7 +94,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Local no-real-key mode with a non-secret placeholder Authorization header.
 - English and Simplified Chinese documentation.
 
-[Unreleased]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/libinyam/dsh-vision-provider/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/libinyam/dsh-vision-provider/compare/v0.2.0...v0.3.0

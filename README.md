@@ -240,6 +240,10 @@ pnpm dsh web
 ```
 
 The direct model also appears as one combination under `DeepSeek + Vision`.
+Because this fallback uses `fetch` directly, it does not pass through Harness
+provider retries, `llm/stream` middleware, or provider token accounting.
+Configure the vision model under **Settings > Models** when those integrations
+are required.
 
 ### Local endpoint without authentication
 
@@ -313,7 +317,8 @@ intentionally declares text-only input.
 
 Check the model's `input`, or its provider's `defaultInput`, in
 **Settings > Models**. It must include both `text` and `image`. Save, reopen the
-model selector, and restart the Web profile if the catalog is still stale.
+model selector, and allow up to 30 seconds for the discovery cache to refresh.
+Restart the Web profile if the catalog is still stale after that.
 
 Inspect the composed tree:
 

@@ -221,6 +221,9 @@ pnpm dsh web
 ```
 
 直连模型也会作为一个组合项显示在 `DeepSeek + Vision` 下。
+由于该回退通道直接使用 `fetch`，它不会经过 Harness 的 Provider 重试、
+`llm/stream` 中间件或 Provider token 计量。需要这些集成能力时，请优先在
+**设置 > 模型** 中注册视觉模型。
 
 ### 无需真实鉴权的本地接口
 
@@ -287,8 +290,8 @@ DeepSeek 会收到正常会话上下文和视觉模型生成的文字描述。�
 ### 新添加的视觉模型没有出现在组合列表
 
 检查 **设置 > 模型** 中该模型的 `input`，或者 Provider 的 `defaultInput`。它必须
-同时包含 `text` 和 `image`。保存后重新打开模型选择器；仍未出现时重启 Web
-Profile。
+同时包含 `text` 和 `image`。保存后重新打开模型选择器，并等待最多 30 秒让发现
+缓存刷新；届时仍未出现再重启 Web Profile。
 
 检查最终组合配置：
 

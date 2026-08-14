@@ -1,5 +1,6 @@
-const PLUGIN_VERSION = '0.3.1'
+export const version = '0.3.3'
 const DYNAMIC_MODEL_MARKER = '+vision:'
+const SIDECAR_CATALOG_TTL_MS = 30_000
 const DEFAULT_VISION_PROMPT = [
   'You are a vision transcription sidecar for another language model.',
   'Inspect every supplied image and return a compact, factual description.',
@@ -268,7 +269,9 @@ export class CompositeVisionAdapter {
     this.config = resolveConfig(config)
     this.fetch = internals.fetch ?? globalThis.fetch?.bind(globalThis)
     this.environment = internals.environment ?? process.env
+    this.now = internals.now ?? Date.now
     this.analysisCache = new Map()
+    this.registeredSidecarsCache = undefined
     if (typeof this.fetch !== 'function') {
       throw pluginError('dsh-vision-provider: this Node.js runtime does not provide fetch', 'UNSUPPORTED_RUNTIME')
     }
@@ -383,7 +386,7 @@ export class CompositeVisionAdapter {
     }
   }
 
-  async registeredVisionSidecars() {
+  async loadRegisteredVisionSidecars() {
     if (
       typeof this.ctx.llm.listProviders !== 'function'
       || typeof this.ctx.llm.listModels !== 'function'
@@ -412,6 +415,35 @@ export class CompositeVisionAdapter {
       }
     }))
     return groups.flat()
+  }
+
+  async registeredVisionSidecars() {
+    const cached = this.registeredSidecarsCache
+    if (
+      cached !== undefined
+      && (cached.pending !== undefined || this.now() < cached.expiresAt)
+    ) {
+      return cached.pending ?? cached.value
+    }
+
+    const entry = {
+      pending: this.loadRegisteredVisionSidecars(),
+      value: undefined,
+      expiresAt: 0,
+    }
+    this.registeredSidecarsCache = entry
+    try {
+      const value = await entry.pending
+      if (this.registeredSidecarsCache === entry) {
+        entry.pending = undefined
+        entry.value = value
+        entry.expiresAt = this.now() + SIDECAR_CATALOG_TTL_MS
+      }
+      return value
+    } catch (error) {
+      if (this.registeredSidecarsCache === entry) this.registeredSidecarsCache = undefined
+      throw error
+    }
   }
 
   preferredSidecar(registered) {
@@ -465,36 +497,15 @@ export class CompositeVisionAdapter {
   }
 
   async registeredSidecar(provider, model) {
-    if (
-      provider === this.config.provider
-      || provider === this.config.mainProvider
-      || typeof this.ctx.llm.listProviders !== 'function'
-      || typeof this.ctx.llm.listModels !== 'function'
-    ) {
+    const entry = (await this.registeredVisionSidecars())
+      .find(candidate => candidate.provider === provider && candidate.model === model)
+    if (entry === undefined) {
       throw pluginError(
         `dsh-vision-provider: unavailable vision route "${provider}/${model}"`,
         'UNKNOWN_MODEL',
       )
     }
-    const providerInfo = this.ctx.llm.listProviders()
-      .find(entry => entry.id === provider)
-    const entry = providerInfo === undefined
-      ? undefined
-      : (await this.ctx.llm.listModels(provider))
-          .find(candidate => candidate.id === model && acceptsImages(candidate))
-    if (providerInfo === undefined || entry === undefined) {
-      throw pluginError(
-        `dsh-vision-provider: unavailable vision route "${provider}/${model}"`,
-        'UNKNOWN_MODEL',
-      )
-    }
-    return {
-      kind: 'registered',
-      provider,
-      providerName: providerInfo.name,
-      model,
-      name: entry.name,
-    }
+    return entry
   }
 
   async selectedSidecar(model) {
@@ -743,7 +754,7 @@ export class CompositeVisionAdapter {
             authorization: `Bearer ${apiKey}`,
             'content-type': 'application/json',
             accept: 'application/json',
-            'user-agent': `dsh-vision-provider/${PLUGIN_VERSION} (+https://github.com/libinyam/dsh-vision-provider)`,
+            'user-agent': `dsh-vision-provider/${version} (+https://github.com/libinyam/dsh-vision-provider)`,
           },
           body: JSON.stringify({
             model: this.config.visionModel,

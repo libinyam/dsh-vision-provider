@@ -4,6 +4,7 @@ import {
   CompositeVisionAdapter,
   apply,
   resolveConfig,
+  version as pluginVersion,
 } from '../src/index.js'
 
 const TEXT_CHUNKS = [
@@ -179,7 +180,10 @@ test('image requests call vision once and send text-only content to DeepSeek', a
     1,
   )
   assert.equal(visionRequests[0].init.headers.authorization, 'Bearer vision-key')
-  assert.match(visionRequests[0].init.headers['user-agent'], /dsh-vision-provider\/0\.3\.1/)
+  assert.equal(
+    visionRequests[0].init.headers['user-agent'],
+    `dsh-vision-provider/${pluginVersion} (+https://github.com/libinyam/dsh-vision-provider)`,
+  )
 
   const sent = mainCalls[0].messages[0].content
   assert.equal(sent.some(block => block.type === 'image'), false)
@@ -345,6 +349,52 @@ test('lists registered image models as selectable DeepSeek combinations', async 
     mainCalls[0].messages[0].content.map(block => block.text ?? '').join(''),
     /qwen-vl-max saw the image/,
   )
+})
+
+test('caches registered vision models for 30 seconds across listing and routing', async () => {
+  const { ctx } = fakeContext()
+  let now = 1_000
+  let providerLists = 0
+  let visionModelLists = 0
+  ctx.llm.listProviders = () => {
+    providerLists += 1
+    return [
+      { id: 'deepseek-official', name: 'DeepSeek' },
+      { id: 'vision-openai', name: 'Vision' },
+    ]
+  }
+  ctx.llm.listModels = async (provider) => {
+    if (provider !== 'vision-openai') return []
+    visionModelLists += 1
+    await Promise.resolve()
+    return [{
+      provider,
+      id: 'cached-vision',
+      name: 'Cached Vision',
+      inputModalities: ['text', 'image'],
+    }]
+  }
+  const adapter = new CompositeVisionAdapter(ctx, {}, { now: () => now })
+
+  const [models] = await Promise.all([
+    adapter.listModels('deepseek-vision'),
+    adapter.listModels('deepseek-vision'),
+  ])
+  assert.equal(providerLists, 1)
+  assert.equal(visionModelLists, 1)
+
+  const registeredModel = models.find(model => model.name === 'Cached Vision')
+  await Promise.all([
+    adapter.resolveModel('deepseek-vision', 'deepseek-v4-flash'),
+    adapter.resolveModel('deepseek-vision', registeredModel.id),
+  ])
+  assert.equal(providerLists, 1)
+  assert.equal(visionModelLists, 1)
+
+  now += 30_001
+  await adapter.listModels('deepseek-vision')
+  assert.equal(providerLists, 2)
+  assert.equal(visionModelLists, 2)
 })
 
 test('legacy sidecars use the configured vision timeout', async () => {
