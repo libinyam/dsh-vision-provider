@@ -272,7 +272,7 @@ key.
 | `DSH_VISION_MODEL_NAME` | Vision model display name shown in Web UI | `GPT-4.1 mini (Vision)` |
 | `DSH_VISION_API_KEY_ENV` | Vision credential reference | `VISION_OPENAI_API_KEY` |
 | `DSH_VISION_NO_AUTH` | Use placeholder auth when set to `1` | unset |
-| `DSH_VISION_MAX_TOKENS` | Maximum vision-analysis output | `1024` |
+| `DSH_VISION_MAX_TOKENS` | Maximum vision-analysis output | `4096` |
 | `DSH_VISION_TIMEOUT_MS` | Request timeout for direct and registered vision models | `120000` |
 | `DSH_VISION_DETAIL` | OpenAI image detail: `auto`, `low`, or `high` | `auto` |
 | `DSH_VISION_USE_LEGACY` | Make the configured registered route the preferred combination; set `0` to prefer direct | enabled |
@@ -338,6 +338,12 @@ The DeepSeek key and vision key are separate.
 
 `DSH_VISION_MODEL` must be the exact model ID accepted by the configured vision
 endpoint. A display name is not an API model ID.
+
+### The vision model exhausts its output tokens
+
+Reasoning-capable vision models can spend part of their output budget before
+starting the visible description. The default is `4096`. If the plugin reports
+`MAX_TOKENS`, increase `DSH_VISION_MAX_TOKENS` and restart the Web profile.
 
 ### The old standalone vision model is still visible
 

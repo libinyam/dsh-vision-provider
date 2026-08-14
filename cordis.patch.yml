@@ -20,7 +20,7 @@
         visionModelName: !!js process.env.DSH_VISION_MODEL_NAME?.trim() || 'GPT-4.1 mini (Vision)'
         visionApiKeyEnv: !!js process.env.DSH_VISION_API_KEY_ENV?.trim() || 'VISION_OPENAI_API_KEY'
         visionNoAuth: !!js process.env.DSH_VISION_NO_AUTH === '1'
-        visionMaxTokens: !!js Number(process.env.DSH_VISION_MAX_TOKENS?.trim() || 1024)
+        visionMaxTokens: !!js Number(process.env.DSH_VISION_MAX_TOKENS?.trim() || 4096)
         visionTimeoutMs: !!js Number(process.env.DSH_VISION_TIMEOUT_MS?.trim() || 120000)
         visionDetail: !!js process.env.DSH_VISION_DETAIL?.trim() || 'auto'
         preferLegacyProvider: !!js process.env.DSH_VISION_USE_LEGACY !== '0'

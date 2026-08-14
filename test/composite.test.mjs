@@ -179,7 +179,7 @@ test('image requests call vision once and send text-only content to DeepSeek', a
     1,
   )
   assert.equal(visionRequests[0].init.headers.authorization, 'Bearer vision-key')
-  assert.match(visionRequests[0].init.headers['user-agent'], /dsh-vision-provider\/0\.3\.0/)
+  assert.match(visionRequests[0].init.headers['user-agent'], /dsh-vision-provider\/0\.3\.1/)
 
   const sent = mainCalls[0].messages[0].content
   assert.equal(sent.some(block => block.type === 'image'), false)
@@ -377,6 +377,82 @@ test('legacy sidecars use the configured vision timeout', async () => {
   )
 })
 
+test('registered sidecars report max-token exhaustion before visible analysis', async () => {
+  const { ctx } = fakeContext()
+  const mainStream = ctx.llm.stream.bind(ctx.llm)
+  ctx.llm.listProviders = () => [
+    { id: 'deepseek-official', name: 'DeepSeek' },
+    { id: 'vision-openai', name: 'Vision' },
+  ]
+  ctx.llm.listModels = async provider => provider === 'vision-openai'
+    ? [{
+        provider,
+        id: 'thinking-vision',
+        name: 'Thinking Vision',
+        inputModalities: ['text', 'image'],
+      }]
+    : []
+  ctx.llm.stream = options => options.provider === 'vision-openai'
+    ? (async function* () {
+        yield { type: 'reasoning-delta', index: 0, text: 'Inspecting the image.' }
+        yield {
+          type: 'block-end',
+          index: 0,
+          block: { type: 'reasoning', text: 'Inspecting the image.' },
+        }
+        yield { type: 'finish', reason: { kind: 'max-tokens' } }
+      })()
+    : mainStream(options)
+  const adapter = new CompositeVisionAdapter(ctx, { visionMaxTokens: 1024 })
+
+  await assert.rejects(
+    collect(adapter.stream({
+      provider: 'deepseek-vision',
+      model: 'deepseek-v4-flash',
+      messages: [imageMessage()],
+    })),
+    error => error.code === 'MAX_TOKENS'
+      && /1024 output tokens/.test(error.message)
+      && /DSH_VISION_MAX_TOKENS/.test(error.message),
+  )
+})
+
+test('registered sidecars keep visible analysis when a reasoning model reaches max tokens', async () => {
+  const { ctx, mainCalls } = fakeContext()
+  const mainStream = ctx.llm.stream.bind(ctx.llm)
+  ctx.llm.listProviders = () => [
+    { id: 'deepseek-official', name: 'DeepSeek' },
+    { id: 'vision-openai', name: 'Vision' },
+  ]
+  ctx.llm.listModels = async provider => provider === 'vision-openai'
+    ? [{
+        provider,
+        id: 'partial-vision',
+        name: 'Partial Vision',
+        inputModalities: ['text', 'image'],
+      }]
+    : []
+  ctx.llm.stream = options => options.provider === 'vision-openai'
+    ? (async function* () {
+        yield { type: 'reasoning-delta', index: 0, text: 'Inspecting the image.' }
+        yield { type: 'text-delta', index: 1, text: 'The screenshot shows three settings.' }
+        yield { type: 'finish', reason: { kind: 'max-tokens' } }
+      })()
+    : mainStream(options)
+  const adapter = new CompositeVisionAdapter(ctx)
+
+  await collect(adapter.stream({
+    provider: 'deepseek-vision',
+    model: 'deepseek-v4-flash',
+    messages: [imageMessage()],
+  }))
+
+  assert.match(
+    mainCalls[0].messages[0].content.map(block => block.text ?? '').join(''),
+    /three settings/,
+  )
+})
+
 test('a null caller signal still combines with the direct vision timeout', async () => {
   const { ctx } = fakeContext()
   const adapter = new CompositeVisionAdapter(ctx, {}, {
@@ -524,4 +600,5 @@ test('configuration rejects recursive routing and invalid bounds', () => {
   )
   assert.equal(resolveConfig({ visionNoAuth: 'true' }).visionNoAuth, true)
   assert.equal(resolveConfig({ preferLegacyProvider: 'no' }).preferLegacyProvider, false)
+  assert.equal(resolveConfig().visionMaxTokens, 4096)
 })

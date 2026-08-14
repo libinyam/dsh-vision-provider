@@ -1,4 +1,4 @@
-const PLUGIN_VERSION = '0.3.0'
+const PLUGIN_VERSION = '0.3.1'
 const DYNAMIC_MODEL_MARKER = '+vision:'
 const DEFAULT_VISION_PROMPT = [
   'You are a vision transcription sidecar for another language model.',
@@ -21,7 +21,7 @@ const DEFAULT_CONFIG = Object.freeze({
   visionModelName: 'GPT-4.1 mini (Vision)',
   visionApiKeyEnv: 'VISION_OPENAI_API_KEY',
   visionNoAuth: false,
-  visionMaxTokens: 1024,
+  visionMaxTokens: 4096,
   visionTimeoutMs: 120_000,
   visionDetail: 'auto',
   cacheSize: 256,
@@ -633,6 +633,8 @@ export class CompositeVisionAdapter {
       }
       let text = ''
       let completedText
+      let finishReason
+      let sawReasoning = false
       for await (const chunk of this.ctx.llm.stream({
         provider: sidecar.provider,
         model: sidecar.model,
@@ -646,18 +648,34 @@ export class CompositeVisionAdapter {
         if (chunk.type === 'block-end' && chunk.block?.type === 'text') {
           completedText = chunk.block.text
         }
-        if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
-          throw pluginError(
-            `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} failed`,
-            chunk.reason.failure?.code ?? (chunk.reason.kind === 'aborted' ? 'ABORTED' : 'VISION_ERROR'),
-            { status: chunk.reason.failure?.status },
-          )
+        if (chunk.type === 'reasoning-delta' && chunk.text.length > 0) sawReasoning = true
+        if (chunk.type === 'block-end' && chunk.block?.type === 'reasoning' && chunk.block.text.length > 0) {
+          sawReasoning = true
+        }
+        if (chunk.type === 'finish') {
+          finishReason = chunk.reason
+          if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+            throw pluginError(
+              `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} failed`,
+              chunk.reason.failure?.code ?? (chunk.reason.kind === 'aborted' ? 'ABORTED' : 'VISION_ERROR'),
+              { status: chunk.reason.failure?.status },
+            )
+          }
         }
       }
       const analysis = (text || completedText || '').trim()
       if (analysis.length === 0) {
+        if (finishReason?.kind === 'max-tokens') {
+          throw pluginError(
+            `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} exhausted`
+              + ` ${this.config.visionMaxTokens} output tokens before returning analysis text;`
+              + ' increase DSH_VISION_MAX_TOKENS',
+            'MAX_TOKENS',
+          )
+        }
         throw pluginError(
-          `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} returned no analysis text`,
+          `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} returned`
+            + `${sawReasoning ? ' reasoning but' : ''} no analysis text`,
           'EMPTY_RESPONSE',
         )
       }

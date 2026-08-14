@@ -251,7 +251,7 @@ pnpm dsh web
 | `DSH_VISION_MODEL_NAME` | Web UI 中显示的视觉模型名称 | `GPT-4.1 mini (Vision)` |
 | `DSH_VISION_API_KEY_ENV` | 视觉凭据名称 | `VISION_OPENAI_API_KEY` |
 | `DSH_VISION_NO_AUTH` | 设为 `1` 时使用占位鉴权 | 未设置 |
-| `DSH_VISION_MAX_TOKENS` | 视觉描述最大输出长度 | `1024` |
+| `DSH_VISION_MAX_TOKENS` | 视觉描述最大输出长度 | `4096` |
 | `DSH_VISION_TIMEOUT_MS` | 直连和已注册视觉模型的请求超时时间 | `120000` |
 | `DSH_VISION_DETAIL` | OpenAI 图片精度：`auto`、`low` 或 `high` | `auto` |
 | `DSH_VISION_USE_LEGACY` | 让指定已注册路由成为首选组合项；设为 `0` 时首选直连模型 | 启用 |
@@ -312,6 +312,12 @@ pnpm dsh --profile web --dump-config
 
 `DSH_VISION_MODEL` 必须填写视觉服务商 API 实际接受的精确模型 ID，显示名称不能
 代替模型 ID。
+
+### 视觉模型耗尽输出额度
+
+带推理能力的视觉模型可能先消耗一部分输出额度，再开始生成可见描述。默认额度为
+`4096`。如果插件提示 `MAX_TOKENS`，请提高 `DSH_VISION_MAX_TOKENS`，然后重启
+Web Profile。
 
 ### 旧的视觉模型还在界面中
 
