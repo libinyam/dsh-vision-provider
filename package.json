@@ -1,7 +1,7 @@
 {
   "name": "dsh-vision-provider",
-  "version": "0.2.0",
-  "description": "Composite DeepSeek Harness adapter that adds a private vision sidecar to DeepSeek V4 Flash.",
+  "version": "0.3.0",
+  "description": "DeepSeek Harness adapter that exposes each configured vision model as a selectable DeepSeek composite in Web UI.",
   "type": "module",
   "main": "./src/index.js",
   "license": "MIT",

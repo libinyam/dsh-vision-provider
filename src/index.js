@@ -1,4 +1,5 @@
-const PLUGIN_VERSION = '0.2.0'
+const PLUGIN_VERSION = '0.3.0'
+const DYNAMIC_MODEL_MARKER = '+vision:'
 const DEFAULT_VISION_PROMPT = [
   'You are a vision transcription sidecar for another language model.',
   'Inspect every supplied image and return a compact, factual description.',
@@ -17,6 +18,7 @@ const DEFAULT_CONFIG = Object.freeze({
   mainModel: 'deepseek-v4-flash',
   visionBaseURL: 'https://api.openai.com/v1',
   visionModel: 'gpt-4.1-mini',
+  visionModelName: 'GPT-4.1 mini (Vision)',
   visionApiKeyEnv: 'VISION_OPENAI_API_KEY',
   visionNoAuth: false,
   visionMaxTokens: 1024,
@@ -72,8 +74,15 @@ function normalizeBaseURL(value) {
 }
 
 function booleanValue(value, fallback) {
-  if (value === undefined) return fallback
-  return value === true || value === 1 || value === '1'
+  if (value === undefined || value === null || value === '') return fallback
+  if (value === true || value === 1) return true
+  if (value === false || value === 0) return false
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  }
+  return false
 }
 
 export function resolveConfig(config = {}) {
@@ -89,6 +98,11 @@ export function resolveConfig(config = {}) {
     mainModel: nonEmptyString(config.mainModel, DEFAULT_CONFIG.mainModel, 'mainModel'),
     visionBaseURL: normalizeBaseURL(config.visionBaseURL),
     visionModel: nonEmptyString(config.visionModel, DEFAULT_CONFIG.visionModel, 'visionModel'),
+    visionModelName: nonEmptyString(
+      config.visionModelName,
+      DEFAULT_CONFIG.visionModelName,
+      'visionModelName',
+    ),
     visionApiKeyEnv: nonEmptyString(
       config.visionApiKeyEnv,
       DEFAULT_CONFIG.visionApiKeyEnv,
@@ -240,15 +254,12 @@ function visionText(content) {
     .trim()
 }
 
-function headerValue(headers, key) {
-  if (headers instanceof Headers) return headers.get(key)
-  if (Array.isArray(headers)) {
-    return headers.find(([name]) => String(name).toLowerCase() === key.toLowerCase())?.[1] ?? null
-  }
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    if (name.toLowerCase() === key.toLowerCase()) return String(value)
-  }
-  return null
+function acceptsImages(model) {
+  return Array.isArray(model?.inputModalities) && model.inputModalities.includes('image')
+}
+
+function sidecarKey(sidecar) {
+  return JSON.stringify([sidecar.kind, sidecar.provider, sidecar.model])
 }
 
 export class CompositeVisionAdapter {
@@ -275,47 +286,55 @@ export class CompositeVisionAdapter {
     }
   }
 
-  listModels(provider) {
-    return Promise.resolve([{
+  async listModels(provider) {
+    this.assertProvider(provider)
+    const [mainName, catalog] = await Promise.all([
+      this.mainModelName(),
+      this.sidecarCatalog(),
+    ])
+    return catalog.map(({ id, sidecar }) => this.compositeModelInfo(
       provider,
-      id: this.config.model,
-      name: this.config.modelName,
-      description: `DeepSeek ${this.config.mainModel} with automatic image analysis by a configured vision sidecar.`,
-      inputModalities: ['text', 'image'],
-    }])
+      id,
+      mainName,
+      sidecar,
+    ))
   }
 
   async resolveModel(provider, model, signal) {
-    this.assertRoute(provider, model)
-    const main = await this.ctx.llm.resolveModelInfo(
-      this.config.mainProvider,
-      this.config.mainModel,
-      signal,
-    )
+    this.assertProvider(provider)
+    const [main, sidecar] = await Promise.all([
+      this.ctx.llm.resolveModelInfo(
+        this.config.mainProvider,
+        this.config.mainModel,
+        signal,
+      ),
+      this.selectedSidecar(model),
+    ])
+    const descriptor = this.compositeModelInfo(provider, model, main.name, sidecar)
     return {
       ...main,
       provider,
       id: model,
-      name: this.config.modelName,
-      description: `Text is answered by ${this.config.mainModel}; images are privately transcribed by the configured vision sidecar first.`,
+      name: descriptor.name,
+      description: descriptor.description,
       inputModalities: ['text', 'image'],
     }
   }
 
   async * stream(options) {
-    this.assertRoute(options.provider, options.model)
-    const messages = []
-    for (const message of options.messages) {
+    this.assertProvider(options.provider)
+    const sidecar = await this.selectedSidecar(options.model)
+    const messages = await Promise.all(options.messages.map(async (message) => {
       let transformed = message
       if (blocksContainImage(message.content)) {
-        const analysis = await this.analysisFor(message, options.signal)
+        const analysis = await this.analysisFor(message, options.signal, sidecar)
         transformed = {
           ...message,
           content: transformedBlocks(message.content, analysis),
         }
       }
-      messages.push(rewriteAssistantSource(transformed, this.config))
-    }
+      return rewriteAssistantSource(transformed, this.config)
+    }))
 
     const mainOptions = {
       ...options,
@@ -328,11 +347,200 @@ export class CompositeVisionAdapter {
     }
   }
 
-  assertRoute(provider, model) {
-    if (provider !== this.config.provider || model !== this.config.model) {
+  assertProvider(provider) {
+    if (provider !== this.config.provider) {
       throw pluginError(
-        `dsh-vision-provider: unknown composite route "${provider}/${model}"`,
+        `dsh-vision-provider: unknown composite provider "${provider}"`,
         'UNKNOWN_MODEL',
+      )
+    }
+  }
+
+  async mainModelName() {
+    const configured = this.config.modelName
+      .replace(/\s*\+\s*Vision\s*$/i, '')
+      .trim() || this.config.mainModel
+    try {
+      const models = await this.ctx.llm.listModels(this.config.mainProvider)
+      return models.find(model => model.id === this.config.mainModel)?.name
+        ?? configured
+    } catch {
+      return configured
+    }
+  }
+
+  directSidecar() {
+    let providerName = this.config.visionBaseURL
+    try {
+      providerName = new URL(this.config.visionBaseURL).host
+    } catch {}
+    return {
+      kind: 'direct',
+      provider: this.config.visionBaseURL,
+      providerName,
+      model: this.config.visionModel,
+      name: this.config.visionModelName,
+    }
+  }
+
+  async registeredVisionSidecars() {
+    if (
+      typeof this.ctx.llm.listProviders !== 'function'
+      || typeof this.ctx.llm.listModels !== 'function'
+    ) {
+      return []
+    }
+    const providers = this.ctx.llm.listProviders()
+      .filter(provider => (
+        provider.id !== this.config.provider
+        && provider.id !== this.config.mainProvider
+      ))
+    const groups = await Promise.all(providers.map(async (provider) => {
+      try {
+        const models = await this.ctx.llm.listModels(provider.id)
+        return models
+          .filter(acceptsImages)
+          .map(model => ({
+            kind: 'registered',
+            provider: provider.id,
+            providerName: provider.name,
+            model: model.id,
+            name: model.name,
+          }))
+      } catch {
+        return []
+      }
+    }))
+    return groups.flat()
+  }
+
+  preferredSidecar(registered) {
+    if (this.config.preferLegacyProvider) {
+      const matches = registered.filter(sidecar => sidecar.provider === this.config.legacyProvider)
+      const selected = this.config.legacyModel === undefined
+        ? matches[0]
+        : matches.find(sidecar => sidecar.model === this.config.legacyModel)
+      if (selected !== undefined) return selected
+    }
+    return this.directSidecar()
+  }
+
+  dynamicModelId(sidecar) {
+    if (sidecar.kind === 'direct') {
+      return `${this.config.model}${DYNAMIC_MODEL_MARKER}d:${encodeURIComponent(sidecar.model)}`
+    }
+    return `${this.config.model}${DYNAMIC_MODEL_MARKER}r:${encodeURIComponent(sidecar.provider)}:${encodeURIComponent(sidecar.model)}`
+  }
+
+  async sidecarCatalog() {
+    const registered = await this.registeredVisionSidecars()
+    const preferred = this.preferredSidecar(registered)
+    const candidates = [preferred, this.directSidecar(), ...registered]
+    const seen = new Set()
+    const unique = []
+    for (const sidecar of candidates) {
+      const key = sidecarKey(sidecar)
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push(sidecar)
+    }
+    return unique.map((sidecar, index) => ({
+      id: index === 0 ? this.config.model : this.dynamicModelId(sidecar),
+      sidecar,
+    }))
+  }
+
+  compositeModelInfo(provider, id, mainName, sidecar) {
+    const visionName = sidecar.name || sidecar.model
+    const source = sidecar.kind === 'direct'
+      ? `${sidecar.providerName} (direct)`
+      : `${sidecar.providerName} (${sidecar.provider})`
+    return {
+      provider,
+      id,
+      name: visionName,
+      description: `${sidecar.model} | ${source} | Final answer: ${mainName} (${this.config.mainProvider}/${this.config.mainModel}).`,
+      inputModalities: ['text', 'image'],
+    }
+  }
+
+  async registeredSidecar(provider, model) {
+    if (
+      provider === this.config.provider
+      || provider === this.config.mainProvider
+      || typeof this.ctx.llm.listProviders !== 'function'
+      || typeof this.ctx.llm.listModels !== 'function'
+    ) {
+      throw pluginError(
+        `dsh-vision-provider: unavailable vision route "${provider}/${model}"`,
+        'UNKNOWN_MODEL',
+      )
+    }
+    const providerInfo = this.ctx.llm.listProviders()
+      .find(entry => entry.id === provider)
+    const entry = providerInfo === undefined
+      ? undefined
+      : (await this.ctx.llm.listModels(provider))
+          .find(candidate => candidate.id === model && acceptsImages(candidate))
+    if (providerInfo === undefined || entry === undefined) {
+      throw pluginError(
+        `dsh-vision-provider: unavailable vision route "${provider}/${model}"`,
+        'UNKNOWN_MODEL',
+      )
+    }
+    return {
+      kind: 'registered',
+      provider,
+      providerName: providerInfo.name,
+      model,
+      name: entry.name,
+    }
+  }
+
+  async selectedSidecar(model) {
+    if (model === this.config.model) return this.resolveSidecar()
+    const prefix = `${this.config.model}${DYNAMIC_MODEL_MARKER}`
+    if (typeof model !== 'string' || !model.startsWith(prefix)) {
+      throw pluginError(
+        `dsh-vision-provider: unknown composite model "${model}"`,
+        'UNKNOWN_MODEL',
+      )
+    }
+    const encoded = model.slice(prefix.length)
+    try {
+      if (encoded.startsWith('d:')) {
+        const sidecarModel = decodeURIComponent(encoded.slice(2))
+        if (sidecarModel !== this.config.visionModel) {
+          throw pluginError(
+            `dsh-vision-provider: unavailable direct vision model "${sidecarModel}"`,
+            'UNKNOWN_MODEL',
+          )
+        }
+        return this.directSidecar()
+      }
+      if (!encoded.startsWith('r:')) {
+        throw pluginError(
+          `dsh-vision-provider: malformed composite model "${model}"`,
+          'UNKNOWN_MODEL',
+        )
+      }
+      const registered = encoded.slice(2)
+      const separator = registered.indexOf(':')
+      if (separator <= 0 || separator === registered.length - 1) {
+        throw pluginError(
+          `dsh-vision-provider: malformed composite model "${model}"`,
+          'UNKNOWN_MODEL',
+        )
+      }
+      const provider = decodeURIComponent(registered.slice(0, separator))
+      const sidecarModel = decodeURIComponent(registered.slice(separator + 1))
+      return this.registeredSidecar(provider, sidecarModel)
+    } catch (error) {
+      if (error?.code) throw error
+      throw pluginError(
+        `dsh-vision-provider: malformed composite model "${model}"`,
+        'UNKNOWN_MODEL',
+        { cause: error },
       )
     }
   }
@@ -357,8 +565,7 @@ export class CompositeVisionAdapter {
     ])
   }
 
-  async analysisFor(message, signal) {
-    const sidecar = await this.resolveSidecar()
+  async analysisFor(message, signal, sidecar) {
     const key = this.cacheKey(message, sidecar)
     const cached = this.analysisCache.get(key)
     if (cached !== undefined) {
@@ -381,68 +588,81 @@ export class CompositeVisionAdapter {
   }
 
   async resolveSidecar() {
-    if (this.config.preferLegacyProvider && typeof this.ctx.llm.listProviders === 'function') {
-      const active = this.ctx.llm.listProviders()
-        .some(provider => provider.id === this.config.legacyProvider)
-      if (active && typeof this.ctx.llm.listModels === 'function') {
-        const models = await this.ctx.llm.listModels(this.config.legacyProvider)
-        const model = this.config.legacyModel === undefined
-          ? models[0]
-          : models.find(entry => entry.id === this.config.legacyModel)
-        if (model !== undefined) {
-          return {
-            kind: 'registered',
-            provider: this.config.legacyProvider,
-            model: model.id,
-          }
-        }
+    return this.preferredSidecar(await this.registeredVisionSidecars())
+  }
+
+  async withVisionTimeout(callerSignal, operation) {
+    const timeout = new AbortController()
+    const timer = setTimeout(
+      () => timeout.abort(pluginError('dsh-vision-provider: vision request timed out', 'TIMEOUT')),
+      this.config.visionTimeoutMs,
+    )
+    timer.unref?.()
+    const signal = callerSignal == null
+      ? timeout.signal
+      : AbortSignal.any([callerSignal, timeout.signal])
+    let onAbort
+    const aborted = new Promise((_resolve, reject) => {
+      onAbort = () => reject(signal.reason)
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([operation(signal), aborted])
+    } catch (error) {
+      if (callerSignal?.aborted) {
+        throw pluginError('dsh-vision-provider: vision request was aborted', 'ABORTED', { cause: error })
       }
-    }
-    return {
-      kind: 'direct',
-      provider: this.config.visionBaseURL,
-      model: this.config.visionModel,
+      if (timeout.signal.aborted && error?.code !== 'TIMEOUT') {
+        throw pluginError('dsh-vision-provider: vision request timed out', 'TIMEOUT', { cause: error })
+      }
+      throw error
+    } finally {
+      if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
+      clearTimeout(timer)
     }
   }
 
   async requestRegisteredVisionAnalysis(message, signal, sidecar) {
-    const sidecarMessage = {
-      ...message,
-      role: 'user',
-      source: { kind: 'user' },
-      content: sidecarBlocks(message.content),
-    }
-    let text = ''
-    let completedText
-    for await (const chunk of this.ctx.llm.stream({
-      provider: sidecar.provider,
-      model: sidecar.model,
-      messages: [sidecarMessage],
-      system: this.config.visionSystemPrompt,
-      temperature: 0,
-      maxTokens: this.config.visionMaxTokens,
-      signal,
-    })) {
-      if (chunk.type === 'text-delta') text += chunk.text
-      if (chunk.type === 'block-end' && chunk.block?.type === 'text') {
-        completedText = chunk.block.text
+    return this.withVisionTimeout(signal, async (requestSignal) => {
+      const sidecarMessage = {
+        ...message,
+        role: 'user',
+        source: { kind: 'user' },
+        content: sidecarBlocks(message.content),
       }
-      if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
+      let text = ''
+      let completedText
+      for await (const chunk of this.ctx.llm.stream({
+        provider: sidecar.provider,
+        model: sidecar.model,
+        messages: [sidecarMessage],
+        system: this.config.visionSystemPrompt,
+        temperature: 0,
+        maxTokens: this.config.visionMaxTokens,
+        signal: requestSignal,
+      })) {
+        if (chunk.type === 'text-delta') text += chunk.text
+        if (chunk.type === 'block-end' && chunk.block?.type === 'text') {
+          completedText = chunk.block.text
+        }
+        if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
+          throw pluginError(
+            `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} failed`,
+            chunk.reason.failure?.code ?? (chunk.reason.kind === 'aborted' ? 'ABORTED' : 'VISION_ERROR'),
+            { status: chunk.reason.failure?.status },
+          )
+        }
+      }
+      const analysis = (text || completedText || '').trim()
+      if (analysis.length === 0) {
         throw pluginError(
-          'dsh-vision-provider: the configured legacy vision provider failed',
-          chunk.reason.failure?.code ?? (chunk.reason.kind === 'aborted' ? 'ABORTED' : 'VISION_ERROR'),
-          { status: chunk.reason.failure?.status },
+          `dsh-vision-provider: vision model ${sidecar.provider}/${sidecar.model} returned no analysis text`,
+          'EMPTY_RESPONSE',
         )
       }
-    }
-    const analysis = (text || completedText || '').trim()
-    if (analysis.length === 0) {
-      throw pluginError(
-        'dsh-vision-provider: the configured legacy vision provider returned no analysis text',
-        'EMPTY_RESPONSE',
-      )
-    }
-    return analysis
+      return analysis
+    })
   }
 
   async resolveVisionApiKey() {
@@ -461,118 +681,110 @@ export class CompositeVisionAdapter {
   }
 
   async requestVisionAnalysis(message, callerSignal) {
-    const timeout = new AbortController()
-    const timer = setTimeout(
-      () => timeout.abort(pluginError('dsh-vision-provider: vision request timed out', 'TIMEOUT')),
-      this.config.visionTimeoutMs,
-    )
-    timer.unref?.()
-    const signal = callerSignal === undefined
-      ? timeout.signal
-      : AbortSignal.any([callerSignal, timeout.signal])
-
-    try {
-      const content = [{
-        type: 'text',
-        text: 'Analyze the following image-bearing message for a downstream text model.',
-      }]
-      let imageNumber = 0
-      const appendBlocks = async (blocks) => {
-        for (const block of blocks) {
-          signal.throwIfAborted()
-          if (block?.type === 'text' && block.text.length > 0) {
-            content.push({ type: 'text', text: block.text })
-            continue
-          }
-          if (block?.type === 'image') {
-            imageNumber += 1
-            const stored = await this.ctx.attachments.readImage(block.attachment, signal)
-            const label = stored.ref.name
-              ? `Image ${imageNumber}: ${stored.ref.name}`
-              : `Image ${imageNumber}`
-            content.push({ type: 'text', text: label })
-            content.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${stored.ref.mediaType};base64,${Buffer.from(stored.data).toString('base64')}`,
-                detail: this.config.visionDetail,
-              },
-            })
-            continue
-          }
-          if (block?.type === 'tool-result') {
-            content.push({ type: 'text', text: '[Tool result content]' })
-            await appendBlocks(block.content ?? [])
+    return this.withVisionTimeout(callerSignal, async (signal) => {
+      try {
+        const content = [{
+          type: 'text',
+          text: 'Analyze the following image-bearing message for a downstream text model.',
+        }]
+        let imageNumber = 0
+        const appendBlocks = async (blocks) => {
+          for (const block of blocks) {
+            signal.throwIfAborted()
+            if (block?.type === 'text' && block.text.length > 0) {
+              content.push({ type: 'text', text: block.text })
+              continue
+            }
+            if (block?.type === 'image') {
+              imageNumber += 1
+              const stored = await this.ctx.attachments.readImage(block.attachment, signal)
+              const label = stored.ref.name
+                ? `Image ${imageNumber}: ${stored.ref.name}`
+                : `Image ${imageNumber}`
+              content.push({ type: 'text', text: label })
+              content.push({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${stored.ref.mediaType};base64,${Buffer.from(stored.data).toString('base64')}`,
+                  detail: this.config.visionDetail,
+                },
+              })
+              continue
+            }
+            if (block?.type === 'tool-result') {
+              content.push({ type: 'text', text: '[Tool result content]' })
+              await appendBlocks(block.content ?? [])
+            }
           }
         }
-      }
-      await appendBlocks(message.content)
+        await appendBlocks(message.content)
 
-      const apiKey = await this.resolveVisionApiKey()
-      const response = await this.fetch(`${this.config.visionBaseURL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-          accept: 'application/json',
-          'user-agent': `dsh-vision-provider/${PLUGIN_VERSION} (+https://github.com/libinyam/dsh-vision-provider)`,
-        },
-        body: JSON.stringify({
-          model: this.config.visionModel,
-          messages: [
-            { role: 'system', content: this.config.visionSystemPrompt },
-            { role: 'user', content },
-          ],
-          temperature: 0,
-          max_tokens: this.config.visionMaxTokens,
-        }),
-        signal,
-      })
+        const apiKey = await this.resolveVisionApiKey()
+        const response = await this.fetch(`${this.config.visionBaseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            'content-type': 'application/json',
+            accept: 'application/json',
+            'user-agent': `dsh-vision-provider/${PLUGIN_VERSION} (+https://github.com/libinyam/dsh-vision-provider)`,
+          },
+          body: JSON.stringify({
+            model: this.config.visionModel,
+            messages: [
+              { role: 'system', content: this.config.visionSystemPrompt },
+              { role: 'user', content },
+            ],
+            temperature: 0,
+            max_tokens: this.config.visionMaxTokens,
+          }),
+          signal,
+        })
 
-      if (!response.ok) {
+        if (!response.ok) {
+          throw pluginError(
+            `dsh-vision-provider: vision API request failed with HTTP ${response.status}`,
+            response.status === 401 || response.status === 403
+              ? 'AUTH'
+              : response.status === 429
+                ? 'RATE_LIMIT'
+                : response.status >= 500
+                  ? 'SERVER'
+                  : 'INVALID_REQUEST',
+            { status: response.status },
+          )
+        }
+
+        let payload
+        try {
+          payload = await response.json()
+        } catch (cause) {
+          throw pluginError(
+            'dsh-vision-provider: vision API returned invalid JSON',
+            'INVALID_RESPONSE',
+            { cause },
+          )
+        }
+        const analysis = visionText(payload?.choices?.[0]?.message?.content)
+        if (analysis.length === 0) {
+          throw pluginError(
+            'dsh-vision-provider: vision API returned no analysis text',
+            'EMPTY_RESPONSE',
+          )
+        }
+        return analysis
+      } catch (error) {
+        if (error?.code) throw error
+        let endpoint = this.config.visionBaseURL
+        try {
+          endpoint = new URL(this.config.visionBaseURL).host
+        } catch {}
         throw pluginError(
-          `dsh-vision-provider: vision API request failed with HTTP ${response.status}`,
-          response.status === 401 || response.status === 403
-            ? 'AUTH'
-            : response.status === 429
-              ? 'RATE_LIMIT'
-              : response.status >= 500
-                ? 'SERVER'
-                : 'INVALID_REQUEST',
-          { status: response.status },
+          `dsh-vision-provider: could not reach vision API ${endpoint}`,
+          'TRANSPORT',
+          { cause: error },
         )
       }
-
-      let payload
-      try {
-        payload = await response.json()
-      } catch (cause) {
-        throw pluginError(
-          'dsh-vision-provider: vision API returned invalid JSON',
-          'INVALID_RESPONSE',
-          { cause },
-        )
-      }
-      const analysis = visionText(payload?.choices?.[0]?.message?.content)
-      if (analysis.length === 0) {
-        throw pluginError(
-          'dsh-vision-provider: vision API returned no analysis text',
-          'EMPTY_RESPONSE',
-        )
-      }
-      return analysis
-    } catch (error) {
-      if (callerSignal?.aborted) {
-        throw pluginError('dsh-vision-provider: vision request was aborted', 'ABORTED', { cause: error })
-      }
-      if (timeout.signal.aborted && error?.code !== 'TIMEOUT') {
-        throw pluginError('dsh-vision-provider: vision request timed out', 'TIMEOUT', { cause: error })
-      }
-      if (error?.code) throw error
-      throw pluginError('dsh-vision-provider: vision API request failed', 'TRANSPORT', { cause: error })
-    } finally {
-      clearTimeout(timer)
-    }
+    })
   }
 }
 
@@ -588,5 +800,6 @@ export const internals = Object.freeze({
   transformedBlocks,
   rewriteAssistantSource,
   visionText,
-  headerValue,
+  acceptsImages,
+  sidecarKey,
 })

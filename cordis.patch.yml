@@ -1,27 +1,28 @@
-# Registers one selectable composite model. The OpenAI-compatible vision model
-# is an internal sidecar and is never registered as a standalone chat route.
+# Registers one composite provider. Every image-capable model already configured
+# in Settings > Models appears as a selectable DeepSeek + vision combination.
 #
 # Existing v0.1.0 users may still have a user-owned `vision-openai` provider in
-# Settings > Models. It can be deleted after upgrading; this bundle no longer
-# creates or uses that provider route.
+# Settings > Models. The bundle reads that route live and lists its image models
+# as combinations; it does not create a second standalone provider itself.
 
 - insert:
     - id: dsh-vision-provider
       name: dsh-vision-provider
       config:
         provider: deepseek-vision
-        displayName: !!js process.env.DSH_VISION_DISPLAY_NAME ?? 'DeepSeek + Vision'
-        model: !!js process.env.DSH_VISION_COMPOSITE_MODEL ?? 'deepseek-v4-flash'
-        modelName: !!js process.env.DSH_VISION_COMPOSITE_NAME ?? 'DeepSeek V4 Flash + Vision'
-        mainProvider: !!js process.env.DSH_VISION_MAIN_PROVIDER ?? 'deepseek-official'
-        mainModel: !!js process.env.DSH_VISION_MAIN_MODEL ?? 'deepseek-v4-flash'
-        visionBaseURL: !!js process.env.DSH_VISION_BASE_URL ?? 'https://api.openai.com/v1'
-        visionModel: !!js process.env.DSH_VISION_MODEL ?? 'gpt-4.1-mini'
-        visionApiKeyEnv: !!js process.env.DSH_VISION_API_KEY_ENV ?? 'VISION_OPENAI_API_KEY'
+        displayName: !!js process.env.DSH_VISION_DISPLAY_NAME?.trim() || 'DeepSeek + Vision'
+        model: !!js process.env.DSH_VISION_COMPOSITE_MODEL?.trim() || 'deepseek-v4-flash'
+        modelName: !!js process.env.DSH_VISION_COMPOSITE_NAME?.trim() || 'DeepSeek V4 Flash + Vision'
+        mainProvider: !!js process.env.DSH_VISION_MAIN_PROVIDER?.trim() || 'deepseek-official'
+        mainModel: !!js process.env.DSH_VISION_MAIN_MODEL?.trim() || 'deepseek-v4-flash'
+        visionBaseURL: !!js process.env.DSH_VISION_BASE_URL?.trim() || 'https://api.openai.com/v1'
+        visionModel: !!js process.env.DSH_VISION_MODEL?.trim() || 'gpt-4.1-mini'
+        visionModelName: !!js process.env.DSH_VISION_MODEL_NAME?.trim() || 'GPT-4.1 mini (Vision)'
+        visionApiKeyEnv: !!js process.env.DSH_VISION_API_KEY_ENV?.trim() || 'VISION_OPENAI_API_KEY'
         visionNoAuth: !!js process.env.DSH_VISION_NO_AUTH === '1'
-        visionMaxTokens: !!js Number(process.env.DSH_VISION_MAX_TOKENS ?? 1024)
-        visionTimeoutMs: !!js Number(process.env.DSH_VISION_TIMEOUT_MS ?? 120000)
-        visionDetail: !!js process.env.DSH_VISION_DETAIL ?? 'auto'
+        visionMaxTokens: !!js Number(process.env.DSH_VISION_MAX_TOKENS?.trim() || 1024)
+        visionTimeoutMs: !!js Number(process.env.DSH_VISION_TIMEOUT_MS?.trim() || 120000)
+        visionDetail: !!js process.env.DSH_VISION_DETAIL?.trim() || 'auto'
         preferLegacyProvider: !!js process.env.DSH_VISION_USE_LEGACY !== '0'
-        legacyProvider: !!js process.env.DSH_VISION_LEGACY_PROVIDER ?? 'vision-openai'
-        legacyModel: !!js process.env.DSH_VISION_LEGACY_MODEL
+        legacyProvider: !!js process.env.DSH_VISION_LEGACY_PROVIDER?.trim() || 'vision-openai'
+        legacyModel: !!js process.env.DSH_VISION_LEGACY_MODEL?.trim() || undefined

@@ -107,7 +107,7 @@ async function collect(iterable) {
   return output
 }
 
-test('registers one combined provider and advertises text plus image', async () => {
+test('registers one combined provider and advertises the direct vision model', async () => {
   const { ctx, registrations } = fakeContext()
   apply(ctx)
   assert.equal(registrations.length, 1)
@@ -115,13 +115,15 @@ test('registers one combined provider and advertises text plus image', async () 
 
   const [model] = await registrations[0].adapter.listModels('deepseek-vision')
   assert.equal(model.id, 'deepseek-v4-flash')
-  assert.equal(model.name, 'DeepSeek V4 Flash + Vision')
+  assert.equal(model.name, 'GPT-4.1 mini (Vision)')
+  assert.match(model.description, /^gpt-4\.1-mini \| api\.openai\.com \(direct\)/)
   assert.deepEqual(model.inputModalities, ['text', 'image'])
 
   const resolved = await registrations[0].adapter.resolveModel(
     'deepseek-vision',
     'deepseek-v4-flash',
   )
+  assert.equal(resolved.name, 'GPT-4.1 mini (Vision)')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
   assert.deepEqual(resolved.context, { contextWindow: 1_000_000 })
   assert.equal(resolved.reasoning.defaultEffort, 'high')
@@ -177,7 +179,7 @@ test('image requests call vision once and send text-only content to DeepSeek', a
     1,
   )
   assert.equal(visionRequests[0].init.headers.authorization, 'Bearer vision-key')
-  assert.match(visionRequests[0].init.headers['user-agent'], /dsh-vision-provider\/0\.2\.0/)
+  assert.match(visionRequests[0].init.headers['user-agent'], /dsh-vision-provider\/0\.3\.0/)
 
   const sent = mainCalls[0].messages[0].content
   assert.equal(sent.some(block => block.type === 'image'), false)
@@ -266,6 +268,129 @@ test('reuses an existing legacy vision route as the hidden sidecar', async () =>
     mainCalls[0].messages[0].content.map(block => block.text ?? '').join(''),
     /login error/,
   )
+})
+
+test('lists registered image models as selectable DeepSeek combinations', async () => {
+  const { ctx, mainCalls } = fakeContext()
+  const sidecarCalls = []
+  const mainStream = ctx.llm.stream.bind(ctx.llm)
+  ctx.llm.listProviders = () => [
+    { id: 'deepseek-official', name: 'DeepSeek' },
+    { id: 'vision-openai', name: 'GLM Vision' },
+    { id: 'qwen-vision', name: 'Qwen Vision' },
+    { id: 'text-only', name: 'Text Only' },
+  ]
+  ctx.llm.listModels = async provider => ({
+    'deepseek-official': [{
+      provider,
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek-V4-Flash',
+      inputModalities: ['text'],
+    }],
+    'vision-openai': [{
+      provider,
+      id: 'GLM-4.6V-Flash',
+      name: 'GLM-4.6V-Flash',
+      inputModalities: ['text', 'image'],
+    }],
+    'qwen-vision': [{
+      provider,
+      id: 'qwen-vl-max',
+      name: 'Qwen VL Max',
+      inputModalities: ['text', 'image'],
+    }],
+    'text-only': [{
+      provider,
+      id: 'text-model',
+      name: 'Text Model',
+      inputModalities: ['text'],
+    }],
+  })[provider] ?? []
+  ctx.llm.stream = (options) => {
+    if (options.provider === 'deepseek-official') return mainStream(options)
+    sidecarCalls.push(options)
+    return (async function* () {
+      yield { type: 'text-delta', index: 0, text: `${options.model} saw the image.` }
+      yield {
+        type: 'finish',
+        reason: { kind: 'stop' },
+      }
+    })()
+  }
+  const adapter = new CompositeVisionAdapter(ctx)
+  const models = await adapter.listModels('deepseek-vision')
+
+  assert.deepEqual(models.map(model => model.name), [
+    'GLM-4.6V-Flash',
+    'GPT-4.1 mini (Vision)',
+    'Qwen VL Max',
+  ])
+  assert.equal(models[0].id, 'deepseek-v4-flash')
+  assert.equal(
+    models[2].id,
+    'deepseek-v4-flash+vision:r:qwen-vision:qwen-vl-max',
+  )
+  assert.match(models[2].description, /^qwen-vl-max \| Qwen Vision/)
+
+  await collect(adapter.stream({
+    provider: 'deepseek-vision',
+    model: models[2].id,
+    messages: [imageMessage()],
+  }))
+
+  assert.equal(sidecarCalls.length, 1)
+  assert.equal(sidecarCalls[0].provider, 'qwen-vision')
+  assert.equal(sidecarCalls[0].model, 'qwen-vl-max')
+  assert.match(
+    mainCalls[0].messages[0].content.map(block => block.text ?? '').join(''),
+    /qwen-vl-max saw the image/,
+  )
+})
+
+test('legacy sidecars use the configured vision timeout', async () => {
+  const { ctx } = fakeContext()
+  ctx.llm.listProviders = () => [
+    { id: 'deepseek-official', name: 'DeepSeek' },
+    { id: 'vision-openai', name: 'Vision' },
+  ]
+  ctx.llm.listModels = async provider => provider === 'vision-openai'
+    ? [{
+        provider,
+        id: 'slow-vision',
+        name: 'Slow Vision',
+        inputModalities: ['text', 'image'],
+      }]
+    : []
+  ctx.llm.stream = _options => (async function* () {
+    await new Promise(() => {})
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })()
+  const adapter = new CompositeVisionAdapter(ctx, { visionTimeoutMs: 10 })
+
+  await assert.rejects(
+    collect(adapter.stream({
+      provider: 'deepseek-vision',
+      model: 'deepseek-v4-flash',
+      messages: [imageMessage()],
+    })),
+    error => error.code === 'TIMEOUT',
+  )
+})
+
+test('a null caller signal still combines with the direct vision timeout', async () => {
+  const { ctx } = fakeContext()
+  const adapter = new CompositeVisionAdapter(ctx, {}, {
+    fetch: async () => new Response(JSON.stringify({
+      choices: [{ message: { content: 'The image is readable.' } }],
+    })),
+  })
+
+  await collect(adapter.stream({
+    provider: 'deepseek-vision',
+    model: 'deepseek-v4-flash',
+    messages: [imageMessage()],
+    signal: null,
+  }))
 })
 
 test('images nested in tool results are removed before DeepSeek serialization', async () => {
@@ -397,4 +522,6 @@ test('configuration rejects recursive routing and invalid bounds', () => {
     () => resolveConfig({ visionMaxTokens: 0 }),
     error => error.code === 'INVALID_CONFIG',
   )
+  assert.equal(resolveConfig({ visionNoAuth: 'true' }).visionNoAuth, true)
+  assert.equal(resolveConfig({ preferLegacyProvider: 'no' }).preferLegacyProvider, false)
 })

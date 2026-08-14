@@ -4,13 +4,16 @@
 
 `dsh-vision-provider` 为
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-增加一个可选择的组合模型：
+在 `DeepSeek + Vision` 分组下增加可选择的视觉模型：
 
 ```text
-deepseek-v4-flash  DeepSeek V4 Flash + Vision
+DeepSeek + Vision
+  GLM-4.6V-Flash
+  Qwen VL Max
+  GPT-4.1 mini (Vision)
 ```
 
-在 Harness 里只选择一个模型即可。插件会在内部自动协调两个模型：
+在 Harness 里只选择一个组合项即可。选择哪个组合项，就使用其中标明的视觉模型：
 
 ```text
 纯文字消息 ─────────────────────────────────────> DeepSeek V4 Flash
@@ -20,22 +23,27 @@ deepseek-v4-flash  DeepSeek V4 Flash + Vision
                                       └──> DeepSeek V4 Flash ──> 最终回答
 ```
 
-OpenAI-compatible 视觉模型只是内部识图器，不会注册成第二个聊天模型，也不会
-出现在会话模型选择器中。
+视觉模型不会作为最终回答模型单独运行，而是以组合项的形式直接出现在会话模型
+选择器中。最终推理、工具调用和回答仍由 DeepSeek 完成。
 
 > 这是社区项目，不是 DeepSeek 或 OpenAI 官方软件包。
 
-## 为什么需要 v0.2.0
+## 为什么需要 v0.3.0
 
 `v0.1.0` 注册的是一个独立的 `vision-openai` 模型。DeepSeek Harness 的一个
 会话只能选择一个模型，所以用户只能在 DeepSeek 和视觉模型之间二选一，两个模型
 不能协作。
 
-`v0.2.0` 改成了真正的组合适配器：
+`v0.2.0` 改成了组合适配器，但视觉模型仍藏在环境变量中，Web UI 只能看到一个
+含义不明确的 `DeepSeek V4 Flash + Vision`。
 
-- `deepseek-vision/deepseek-v4-flash` 对外声明支持 `text` 和 `image`；
+`v0.3.0` 把视觉模型选择带回 Web UI：
+
+- 插件实时读取 **设置 > 模型** 中所有声明支持 `image` 的模型；
+- 每个视觉模型生成一个独立的 DeepSeek 组合项；
+- 组合名称显示视觉模型名称，说明文字首先显示准确的模型 ID 和 Provider 路由；
 - 纯文字请求直接发送给 `deepseek-official/deepseek-v4-flash`；
-- 含图片的消息先交给隐藏的 OpenAI-compatible 视觉模型分析；
+- 含图片的消息先交给用户在 Web UI 中选中的视觉模型分析；
 - 插件把图片替换成视觉模型生成的文字描述，再发送给 DeepSeek；
 - 推理、工具调用和最终回答仍然由 DeepSeek 完成；
 - 同一进程内的后续工具步骤会复用图片分析缓存，避免重复识图。
@@ -48,11 +56,12 @@ OpenAI-compatible 视觉模型只是内部识图器，不会注册成第二个�
 - DeepSeek Harness `0.1.0-rc.5` 或兼容版本。
 - Node.js `>=22.19.0`。
 - 已为原生 `deepseek-official` Provider 配置 DeepSeek API Key。
-- 一个支持图片输入的 OpenAI-compatible 接口及其 API Key。
+- 至少一个在 **设置 > 模型** 中声明支持 `text` 和 `image` 的视觉模型，或者一个
+  直连 OpenAI-compatible 视觉接口。
 - `dsh plugin` 可以正常调用 `pnpm`。
 
-从 `v0.1.0` 升级时，插件会自动复用已经激活的 `vision-openai` 路由作为隐藏
-识图器。全新安装且没有旧路由时，默认直连
+从旧版本升级时，插件会自动读取已经激活的 `vision-openai` 等视觉路由，并把其中
+支持图片的模型列成组合项。全新安装且没有视觉路由时，保留一个默认直连
 `https://api.openai.com/v1` 下的 `gpt-4.1-mini`。也可以换成任何实现
 OpenAI-compatible `/chat/completions` 图片输入的服务。
 
@@ -116,11 +125,12 @@ pnpm dsh web
 1. 启动或重启 Web Profile。
 2. 新建会话。
 3. Provider 选择 `DeepSeek + Vision`。
-4. 模型选择 `deepseek-v4-flash / DeepSeek V4 Flash + Vision`。
+4. 在模型列表中直接选择需要的视觉模型，例如 `GLM-4.6V-Flash`。
 5. 把图片粘贴或拖入输入框。
 6. 输入问题并发送。
 
-只选择这一个组合模型。不要再选择 GLM/OpenAI 视觉模型，它现在只是内部识图器。
+只选择一个模型。第一行是视觉模型显示名称，第二行开头是接口实际使用的精确模型
+ID；最终回答模型仍然是 DeepSeek。
 
 发送纯文字时不会调用视觉接口。
 
@@ -144,29 +154,73 @@ pnpm dsh plugin --profile web add github:libinyam/dsh-vision-provider
 pnpm dsh web
 ```
 
-升级后，**设置 > 模型** 中仍可能保留旧的 `vision-openai`。这是 `v0.1.0`
-时期保存的用户配置。`v0.2.0` 会自动把这个已激活路由当成内部识图器，因此已有的
-GLM 模型、协议、接口地址和凭据可以继续使用。会话中只选择
-`DeepSeek + Vision`，不需要再手动选择旧路由。
+升级后，**设置 > 模型** 中已有的 `vision-openai`、GLM、Qwen 或其他视觉
+Provider 会继续保留。`v0.3.0` 会读取其中声明支持 `image` 的模型，并自动生成
+对应组合项。
 
-只有在配置好直连识图器并设置 `DSH_VISION_USE_LEGACY=0` 后，才建议删除旧路由。
+不要删除仍要使用的视觉 Provider；它现在就是 Web UI 组合目录的数据来源。
 
-## 使用第三方视觉接口
+## 在 Web UI 添加视觉模型
 
-启动 Harness 前设置：
+1. 打开 **设置 > 模型**。
+2. 添加或编辑一个第三方 Provider。
+3. 填写 Provider ID、显示名称、协议、接口地址和凭据名称。
+4. 添加视觉模型的准确 ID 和显示名称。
+5. 保存后回到会话模型选择器，打开 `DeepSeek + Vision`。
+
+Harness 内置模型目录已经携带输入能力信息，因此已知视觉模型会自动出现。
+Harness `0.1.0-rc.5` 的“模型”页面还没有给自定义模型提供图片能力开关。此类模型
+需要在 `settings.yaml` 中补上 `input: [text, image]`，或者给 Provider 设置
+`defaultInput: [text, image]`，然后重启 Web。
+
+插件会自动出现类似下面的组合项，无需再设置
+`DSH_VISION_LEGACY_PROVIDER`：
+
+```text
+视觉模型显示名称
+视觉模型ID | Provider显示名称 (Provider ID) | Final answer: DeepSeek-V4-Flash
+```
+
+关键点是必须声明图片能力。自定义模型若保持 Harness 默认的
+`input: [text]`，插件不会把它误列为视觉模型。
+
+Provider 信息、凭据、模型 ID 和显示名称仍然可以在 Web UI 中管理。下面两个能力
+字段是自定义模型可能需要在 `settings.yaml` 中补充的部分：
+
+```yaml
+llm-pi-ai:
+  providers:
+    my-vision:
+      displayName: My Vision Provider
+      apiKeyEnv: MY_VISION_API_KEY
+      api: openai-completions
+      baseURL: https://供应商接口地址/v1
+      defaultInput: [text, image]
+      models:
+        - id: 供应商的视觉模型ID
+          name: 视觉模型显示名称
+          input: [text, image]
+```
+
+API Key 继续在 Web UI 的凭据输入框中保存，不要把真实密钥直接写进
+`settings.yaml`。
+
+## 高级：直连第三方视觉接口
+
+不想在 **设置 > 模型** 中注册 Provider 时，也可以在启动 Harness 前设置：
 
 ```powershell
 $env:DSH_VISION_USE_LEGACY = "0"
 $env:DSH_VISION_BASE_URL = "https://你的网关地址/v1"
 $env:DSH_VISION_MODEL = "服务商提供的视觉模型ID"
+$env:DSH_VISION_MODEL_NAME = "视觉模型显示名称"
 $env:DSH_VISION_API_KEY_ENV = "MY_VISION_GATEWAY_KEY"
 $env:MY_VISION_GATEWAY_KEY = "你的API密钥"
 
 pnpm dsh web
 ```
 
-`DSH_VISION_MODEL` 表示隐藏的视觉识图器 ID，不会改变界面中选择的 DeepSeek
-组合模型。
+直连模型也会作为一个组合项显示在 `DeepSeek + Vision` 下。
 
 ### 无需真实鉴权的本地接口
 
@@ -188,20 +242,21 @@ pnpm dsh web
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
 | `DSH_VISION_DISPLAY_NAME` | 组合 Provider 显示名称 | `DeepSeek + Vision` |
-| `DSH_VISION_COMPOSITE_MODEL` | Harness 中显示的组合模型 ID | `deepseek-v4-flash` |
-| `DSH_VISION_COMPOSITE_NAME` | 组合模型显示名称 | `DeepSeek V4 Flash + Vision` |
+| `DSH_VISION_COMPOSITE_MODEL` | 首选组合项的兼容 ID，也是其他组合 ID 的前缀 | `deepseek-v4-flash` |
+| `DSH_VISION_COMPOSITE_NAME` | 无法读取主模型名称时使用的回退名称 | `DeepSeek V4 Flash + Vision` |
 | `DSH_VISION_MAIN_PROVIDER` | 内部文字推理 Provider | `deepseek-official` |
 | `DSH_VISION_MAIN_MODEL` | 内部 DeepSeek 模型 | `deepseek-v4-flash` |
 | `DSH_VISION_BASE_URL` | 视觉接口根地址 | `https://api.openai.com/v1` |
-| `DSH_VISION_MODEL` | 隐藏的视觉模型 ID | `gpt-4.1-mini` |
+| `DSH_VISION_MODEL` | 直连组合项使用的视觉模型 ID | `gpt-4.1-mini` |
+| `DSH_VISION_MODEL_NAME` | Web UI 中显示的视觉模型名称 | `GPT-4.1 mini (Vision)` |
 | `DSH_VISION_API_KEY_ENV` | 视觉凭据名称 | `VISION_OPENAI_API_KEY` |
 | `DSH_VISION_NO_AUTH` | 设为 `1` 时使用占位鉴权 | 未设置 |
 | `DSH_VISION_MAX_TOKENS` | 视觉描述最大输出长度 | `1024` |
-| `DSH_VISION_TIMEOUT_MS` | 视觉请求超时时间 | `120000` |
+| `DSH_VISION_TIMEOUT_MS` | 直连和已注册视觉模型的请求超时时间 | `120000` |
 | `DSH_VISION_DETAIL` | OpenAI 图片精度：`auto`、`low` 或 `high` | `auto` |
-| `DSH_VISION_USE_LEGACY` | 复用已激活的旧路由；设为 `0` 时使用直连模式 | 启用 |
-| `DSH_VISION_LEGACY_PROVIDER` | 旧识图 Provider 路由 | `vision-openai` |
-| `DSH_VISION_LEGACY_MODEL` | 可选的旧识图模型 ID；未设置时使用第一个模型 | 未设置 |
+| `DSH_VISION_USE_LEGACY` | 让指定已注册路由成为首选组合项；设为 `0` 时首选直连模型 | 启用 |
+| `DSH_VISION_LEGACY_PROVIDER` | 首选的已注册视觉 Provider 路由 | `vision-openai` |
+| `DSH_VISION_LEGACY_MODEL` | 可选的首选视觉模型 ID；未设置时使用该路由第一个图片模型 | 未设置 |
 
 ## 数据流与隐私
 
@@ -226,8 +281,14 @@ DeepSeek 会收到正常会话上下文和视觉模型生成的文字描述。�
 
 ### 图片仍然被拒绝
 
-请新建会话并选择 `DeepSeek + Vision`，不要选择原生 `DeepSeek`。原生
+请新建会话，在 `DeepSeek + Vision` 下选择一个明确的视觉组合项，不要选择原生 `DeepSeek`。原生
 `deepseek-official` 模型明确只支持文字输入。
+
+### 新添加的视觉模型没有出现在组合列表
+
+检查 **设置 > 模型** 中该模型的 `input`，或者 Provider 的 `defaultInput`。它必须
+同时包含 `text` 和 `image`。保存后重新打开模型选择器；仍未出现时重启 Web
+Profile。
 
 检查最终组合配置：
 
@@ -254,15 +315,15 @@ pnpm dsh --profile web --dump-config
 
 ### 旧的视觉模型还在界面中
 
-它是 `v0.1.0` 留下的用户配置，新版 Bundle 本身不会注册它。组合模型可以在内部
-继续复用这个路由，所以它暂时保留也没有问题。准备删除前，请先配置直连模式、设置
-`DSH_VISION_USE_LEGACY=0`、重启并验证图片功能，然后再删除旧 Provider。
+它是用户自己的 Provider 配置，新版 Bundle 本身不会创建或删除它。该 Provider
+中声明支持 `image` 的模型会成为 `DeepSeek + Vision` 下的可选组合项。只有确定
+不再使用其中任何视觉模型时才应删除。
 
 ### DeepSeek 的回答没有使用图片内容
 
-先确认选中的是 `DeepSeek + Vision`，然后检查视觉接口本身是否能正确识图，或者
-换用更强的视觉模型。DeepSeek 看到的是视觉模型生成的文字描述，描述中遗漏的细节
-无法在后续推理中恢复。
+先确认选中的是 `DeepSeek + Vision` 下正确的视觉组合项，然后检查该视觉接口本身
+是否能正确识图，或者直接在下拉框中换用另一个视觉模型。DeepSeek 看到的是视觉
+模型生成的文字描述，描述中遗漏的细节无法在后续推理中恢复。
 
 ## 更新与卸载
 
