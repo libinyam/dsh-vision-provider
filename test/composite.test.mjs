@@ -652,3 +652,50 @@ test('configuration rejects recursive routing and invalid bounds', () => {
   assert.equal(resolveConfig({ preferLegacyProvider: 'no' }).preferLegacyProvider, false)
   assert.equal(resolveConfig().visionMaxTokens, 4096)
 })
+
+// Mirrors the trusted path of Harness's normalizeLlmFailure
+// (packages/llm/llm/src/adapter-failure.ts): an adapter throw keeps its code
+// and status in the terminal finish chunk only when an own `failure` data
+// property agrees with the own `code`; anything else degrades to
+// { message, code: 'UNKNOWN' } and becomes invisible to llm-retry's
+// retryable-code matching.
+function normalizeAdapterFailure(value) {
+  const error = value instanceof Error ? value : new Error(String(value))
+  const failureDescriptor = Object.getOwnPropertyDescriptor(error, 'failure')
+  const codeDescriptor = Object.getOwnPropertyDescriptor(error, 'code')
+  if (
+    failureDescriptor !== undefined && 'value' in failureDescriptor
+    && codeDescriptor !== undefined && 'value' in codeDescriptor
+    && failureDescriptor.value?.code === codeDescriptor.value
+  ) {
+    return failureDescriptor.value
+  }
+  return { message: error.message, code: 'UNKNOWN' }
+}
+
+test('thrown errors keep code and status through Harness failure normalization', async () => {
+  const { ctx } = fakeContext()
+  const adapter = new CompositeVisionAdapter(ctx, {}, {
+    fetch: async () => new Response(JSON.stringify({ error: 'rate limited' }), { status: 429 }),
+  })
+
+  const error = await collect(adapter.stream({
+    provider: 'deepseek-vision',
+    model: 'deepseek-v4-flash',
+    messages: [imageMessage()],
+  })).then(
+    () => {
+      throw new Error('stream must reject')
+    },
+    reason => reason,
+  )
+  const normalized = normalizeAdapterFailure(error)
+  assert.equal(normalized.code, 'RATE_LIMIT')
+  assert.equal(normalized.status, 429)
+  assert.match(normalized.message, /HTTP 429/)
+
+  // A plain Error with only own `code` loses its taxonomy at the boundary;
+  // this is the shape the plugin must not regress to.
+  const degraded = normalizeAdapterFailure(Object.assign(new Error('denied'), { code: 'AUTH' }))
+  assert.equal(degraded.code, 'UNKNOWN')
+})

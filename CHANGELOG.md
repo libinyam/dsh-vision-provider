@@ -11,6 +11,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Added a bilingual community acknowledgement for Linux.do.
 
+### Fixed
+
+- Attached a matching own `failure` payload to every plugin error so Harness
+  keeps the plugin's code and HTTP status in the terminal finish chunk instead
+  of normalizing them to `UNKNOWN`. Retryable vision failures such as
+  `RATE_LIMIT`, `SERVER`, and `TIMEOUT` now remain visible to `llm-retry`'s
+  retryable-code matching.
+
 ## [0.3.3] - 2026-08-14
 
 ### Changed
