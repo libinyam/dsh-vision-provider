@@ -37,6 +37,15 @@ export const inject = ['llm', 'attachments']
 function pluginError(message, code, details = {}) {
   const error = new Error(message, details.cause === undefined ? undefined : { cause: details.cause })
   error.code = code
+  // Harness normalizes adapter throws into a terminal finish chunk. It trusts
+  // the carried facts only when an own `failure` data property agrees with the
+  // own `code`; a plain Error otherwise degrades to code UNKNOWN, which also
+  // hides the failure from llm-retry's retryable-code matching.
+  error.failure = Object.freeze({
+    message,
+    code,
+    ...(details.status === undefined ? {} : { status: details.status }),
+  })
   if (details.status !== undefined) error.status = details.status
   return error
 }
